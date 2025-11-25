@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request ,session,redirect
+from flask import Flask, render_template, request ,session,redirect,jsonify,make_response
 from pymongo import MongoClient
 from datetime import datetime
 from bson.objectid import ObjectId
@@ -18,7 +18,18 @@ client = MongoClient(mongo_uri)
 app = Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY")
 
+def no_cache(f):
+    def decorated_function(*args, **kwargs):
+        response = make_response(f(*args, **kwargs))
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+    decorated_function.__name__ = f.__name__
+    return decorated_function
+
 @app.route("/",methods=['GET','POST'])
+@no_cache
 def dashboard():
     if ('user' in session and session['user']== usr_name):
         return render_template('dashboard.html')
@@ -31,11 +42,13 @@ def dashboard():
     return render_template('login.html')
 
 @app.route("/logout", methods=['POST'])
+@no_cache
 def logout():
     session.pop('user', None)
     return redirect("/")
 
 @app.route("/customer", methods=['GET', 'POST'])
+@no_cache
 def customer():
     if 'user' in session and session['user'] == usr_name:
         db = client["customer_db"]
@@ -50,6 +63,7 @@ def customer():
 
 
 @app.route("/customer/add", methods=['POST'])
+@no_cache
 def add_customer():
     if 'user' in session and session['user'] == usr_name:
         db = client["customer_db"]
@@ -92,6 +106,7 @@ def add_customer():
 
 
 @app.route("/customer/edit/<customer_id>", methods=['GET', 'POST'])
+@no_cache
 def edit_customer(customer_id):
     if 'user' in session and session['user'] == usr_name:
         db = client["customer_db"]
@@ -126,6 +141,7 @@ def edit_customer(customer_id):
 
 
 @app.route("/customer/delete", methods=['POST'])
+@no_cache
 def delete_customer():
     if 'user' in session and session['user'] == usr_name:
         db = client["customer_db"]
@@ -141,6 +157,7 @@ def delete_customer():
 
 
 @app.route("/customer/status", methods=['POST'])
+@no_cache
 def update_customer_status():
     if 'user' in session and session['user'] == usr_name:
         db = client["customer_db"]
@@ -159,5 +176,61 @@ def update_customer_status():
         )
         
         return redirect('/customer')
+    else:
+        return redirect("/")
+
+@app.route("/sanourl", methods=['GET', 'POST', 'DELETE'])
+@no_cache
+def sanourl():
+    if 'user' in session and session['user'] == usr_name:
+        db = client["sanourl_db"]
+        collection = db["urls"]
+        
+        # Handle DELETE request for multiple URLs
+        if request.method == 'DELETE':
+            data = request.get_json()
+            url_ids = data.get('ids', [])
+            if url_ids:
+                from bson.objectid import ObjectId
+                result = collection.delete_many({
+                    '_id': {'$in': [ObjectId(id) for id in url_ids]}
+                })
+                return jsonify({'success': True, 'deleted': result.deleted_count})
+            return jsonify({'success': False, 'message': 'No IDs provided'})
+        
+        # Fetch all URLs
+        urls = list(collection.find())
+        total_urls = len(urls)
+        
+        return render_template('sanourl.html', urls=urls, total_urls=total_urls)
+    else:
+        return redirect("/")
+
+@app.route("/newsletter", methods=['GET', 'POST', 'DELETE'])
+@no_cache
+def newsletter():
+    if 'user' in session and session['user'] == usr_name:
+        db = client["emails_db"]
+        collection = db["emails"]
+        
+        # Handle DELETE request for multiple emails
+        if request.method == 'DELETE':
+            data = request.get_json()
+            email_ids = data.get('ids', [])
+            if email_ids:
+                try:
+                    result = collection.delete_many({
+                        '_id': {'$in': [ObjectId(id) for id in email_ids]}
+                    })
+                    return jsonify({'success': True, 'deleted': result.deleted_count})
+                except Exception as e:
+                    return jsonify({'success': False, 'message': str(e)}), 400
+            return jsonify({'success': False, 'message': 'No IDs provided'}), 400
+        
+        # Fetch all emails
+        emails = list(collection.find())
+        total_emails = len(emails)
+        
+        return render_template('newsletter.html', emails=emails, total_emails=total_emails)
     else:
         return redirect("/")
