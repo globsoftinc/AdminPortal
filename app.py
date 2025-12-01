@@ -1,9 +1,10 @@
 from flask import Flask, render_template, request ,session,redirect,jsonify,make_response
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 from dotenv import load_dotenv
 import os
+from flask_cors import CORS
 
 load_dotenv()
 
@@ -18,6 +19,19 @@ client = MongoClient(mongo_uri)
 app = Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY")
 
+# Add CORS (install: pip install flask-cors)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",  # Allow all origins for public API
+        "methods": ["GET"],
+        "max_age": 300  # Cache preflight for 5 minutes
+    }
+})
+
+# Simple in-memory cache
+_status_cache = {"data": None, "timestamp": None}
+
+
 def no_cache(f):
     def decorated_function(*args, **kwargs):
         response = make_response(f(*args, **kwargs))
@@ -27,6 +41,82 @@ def no_cache(f):
         return response
     decorated_function.__name__ = f.__name__
     return decorated_function
+
+@app.route("/api/system-status", methods=['GET'])
+def get_system_status():
+    """Public endpoint with 5-minute cache"""
+    global _status_cache
+    
+    # Check if cache is valid (less than 5 minutes old)
+    if (_status_cache["data"] and _status_cache["timestamp"] and 
+        datetime.now() - _status_cache["timestamp"] < timedelta(minutes=5)):
+        response = jsonify(_status_cache["data"])
+        response.headers['Cache-Control'] = 'public, max-age=300'
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
+    
+    # Cache expired or empty - fetch from database
+    db = client["globsoft_db"]
+    collection = db["system_status"]
+    status = collection.find_one(sort=[("updated_at", -1)])
+    
+    if not status:
+        data = {"status": "running", "message": "All Systems Operational"}
+    else:
+        data = {
+            "status": status.get("status", "running"),
+            "message": status.get("message", "All Systems Operational"),
+            "updated_at": status.get("updated_at").isoformat() if status.get("updated_at") else None
+        }
+    
+    # Update cache
+    _status_cache["data"] = data
+    _status_cache["timestamp"] = datetime.now()
+    
+    response = jsonify(data)
+    response.headers['Cache-Control'] = 'public, max-age=300'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+
+@app.route("/system-status", methods=['GET', 'POST'])
+@no_cache
+def manage_system_status():
+    """Admin page - clears cache on update"""
+    global _status_cache
+    
+    if 'user' in session and session['user'] == usr_name:
+        db = client["globsoft_db"]
+        collection = db["system_status"]
+        
+        if request.method == 'POST':
+            status = request.form.get("status")
+            message = request.form.get("message")
+            
+            status_data = {
+                "status": status,
+                "message": message,
+                "updated_by": session['user'],
+                "updated_at": datetime.now()
+            }
+            
+            collection.insert_one(status_data)
+            
+            # Clear cache so next request fetches new data
+            _status_cache = {"data": None, "timestamp": None}
+            
+            from flask import flash
+            flash('System status updated successfully!', 'success')
+            return redirect('/system-status')
+        
+        current_status = collection.find_one(sort=[("updated_at", -1)])
+        history = list(collection.find().sort("updated_at", -1).limit(20))
+        
+        return render_template('system_status.html', 
+                             current_status=current_status,
+                             history=history)
+    else:
+        return redirect("/")
 
 @app.route("/",methods=['GET','POST'])
 @no_cache
@@ -233,4 +323,5 @@ def newsletter():
         
         return render_template('newsletter.html', emails=emails, total_emails=total_emails)
     else:
+
         return redirect("/")
