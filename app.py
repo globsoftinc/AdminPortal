@@ -19,18 +19,11 @@ client = MongoClient(mongo_uri)
 app = Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY")
 
-# Add CORS (install: pip install flask-cors)
-CORS(app, resources={
-    r"/api/*": {
-        "origins": "*",  # Allow all origins for public API
-        "methods": ["GET"],
-        "max_age": 300  # Cache preflight for 5 minutes
-    }
-})
+CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET"], "max_age": 300}})
 
-# Simple in-memory cache
+# Cache for both status and products
 _status_cache = {"data": None, "timestamp": None}
-
+_products_cache = {"data": None, "timestamp": None}
 
 def no_cache(f):
     def decorated_function(*args, **kwargs):
@@ -42,12 +35,12 @@ def no_cache(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
+# ==================== SYSTEM STATUS ====================
+
 @app.route("/api/system-status", methods=['GET'])
 def get_system_status():
-    """Public endpoint with 5-minute cache"""
     global _status_cache
     
-    # Check if cache is valid (less than 5 minutes old)
     if (_status_cache["data"] and _status_cache["timestamp"] and 
         datetime.now() - _status_cache["timestamp"] < timedelta(minutes=5)):
         response = jsonify(_status_cache["data"])
@@ -55,7 +48,6 @@ def get_system_status():
         response.headers['Access-Control-Allow-Origin'] = '*'
         return response
     
-    # Cache expired or empty - fetch from database
     db = client["globsoft_db"]
     collection = db["system_status"]
     status = collection.find_one(sort=[("updated_at", -1)])
@@ -69,7 +61,6 @@ def get_system_status():
             "updated_at": status.get("updated_at").isoformat() if status.get("updated_at") else None
         }
     
-    # Update cache
     _status_cache["data"] = data
     _status_cache["timestamp"] = datetime.now()
     
@@ -82,7 +73,6 @@ def get_system_status():
 @app.route("/system-status", methods=['GET', 'POST'])
 @no_cache
 def manage_system_status():
-    """Admin page - clears cache on update"""
     global _status_cache
     
     if 'user' in session and session['user'] == usr_name:
@@ -101,8 +91,6 @@ def manage_system_status():
             }
             
             collection.insert_one(status_data)
-            
-            # Clear cache so next request fetches new data
             _status_cache = {"data": None, "timestamp": None}
             
             from flask import flash
@@ -115,6 +103,98 @@ def manage_system_status():
         return render_template('system_status.html', 
                              current_status=current_status,
                              history=history)
+    else:
+        return redirect("/")
+
+
+# ==================== PRODUCTS ====================
+
+@app.route("/api/products", methods=['GET'])
+def get_products():
+    global _products_cache
+    
+    if (_products_cache["data"] and _products_cache["timestamp"] and 
+        datetime.now() - _products_cache["timestamp"] < timedelta(minutes=5)):
+        response = jsonify(_products_cache["data"])
+        response.headers['Cache-Control'] = 'public, max-age=300'
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
+    
+    db = client["globsoft_db"]
+    collection = db["products"]
+    products = list(collection.find().sort("order", 1))
+    
+    # Convert ObjectId to string
+    for product in products:
+        product['_id'] = str(product['_id'])
+    
+    _products_cache["data"] = products
+    _products_cache["timestamp"] = datetime.now()
+    
+    response = jsonify(products)
+    response.headers['Cache-Control'] = 'public, max-age=300'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+
+@app.route("/products-manager", methods=['GET', 'POST'])
+@no_cache
+def manage_products():
+    global _products_cache
+    
+    if 'user' in session and session['user'] == usr_name:
+        db = client["globsoft_db"]
+        collection = db["products"]
+        
+        if request.method == 'POST':
+            action = request.form.get("action")
+            
+            if action == "add":
+                product_data = {
+                    "id": int(request.form.get("product_id")),
+                    "name": request.form.get("name"),
+                    "image": request.form.get("image"),
+                    "link": request.form.get("link"),
+                    "desc": request.form.get("desc"),
+                    "order": int(request.form.get("order", 999)),
+                    "updated_at": datetime.now()
+                }
+                collection.insert_one(product_data)
+                _products_cache = {"data": None, "timestamp": None}
+                
+                from flask import flash
+                flash('Product added successfully!', 'success')
+            
+            elif action == "edit":
+                product_id = request.form.get("edit_id")
+                collection.update_one(
+                    {"_id": ObjectId(product_id)},
+                    {"$set": {
+                        "name": request.form.get("name"),
+                        "image": request.form.get("image"),
+                        "link": request.form.get("link"),
+                        "desc": request.form.get("desc"),
+                        "order": int(request.form.get("order", 999)),
+                        "updated_at": datetime.now()
+                    }}
+                )
+                _products_cache = {"data": None, "timestamp": None}
+                
+                from flask import flash
+                flash('Product updated successfully!', 'success')
+            
+            elif action == "delete":
+                product_id = request.form.get("delete_id")
+                collection.delete_one({"_id": ObjectId(product_id)})
+                _products_cache = {"data": None, "timestamp": None}
+                
+                from flask import flash
+                flash('Product deleted successfully!', 'success')
+            
+            return redirect('/products-manager')
+        
+        products = list(collection.find().sort("order", 1))
+        return render_template('products_manager.html', products=products)
     else:
         return redirect("/")
 
@@ -325,3 +405,4 @@ def newsletter():
     else:
 
         return redirect("/")
+
