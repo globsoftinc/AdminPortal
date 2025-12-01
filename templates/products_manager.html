@@ -1,9 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Products Manager</title>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='images/globsoft.png') }}">
+    <title>Products - GlobSoft Inc.</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -73,7 +76,7 @@
         <a href="/" class="back-btn">← Back to Dashboard</a>
         
         <div class="card">
-            <h1>📦 Products Manager</h1>
+            <h1>📦 Products Management Portal</h1>
             <p style="color: #666; margin-bottom: 20px;">Manage your products</p>
             
             {% with messages = get_flashed_messages(with_categories=true) %}
@@ -96,7 +99,7 @@
                 </div>
                 <div class="form-group">
                     <label>Image URL:</label>
-                    <input type="text" name="image" placeholder="img/product.png" required>
+                    <input type="text" name="image" placeholder="https://globsoft.tech/example.png" required>
                 </div>
                 <div class="form-group">
                     <label>Link:</label>
@@ -105,10 +108,6 @@
                 <div class="form-group">
                     <label>Description:</label>
                     <textarea name="desc" rows="3" required></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Order:</label>
-                    <input type="number" name="order" value="999">
                 </div>
                 <button type="submit">Add Product</button>
             </form>
