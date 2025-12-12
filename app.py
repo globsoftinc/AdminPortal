@@ -406,3 +406,95 @@ def newsletter():
 
         return redirect("/")
 
+# Add this to your existing app.py file on the other domain
+
+# ==================== GURUJI INSTRUCTOR VERIFICATION ====================
+
+@app.route("/guruji-instructors", methods=['GET', 'POST'])
+@no_cache
+def guruji_instructors():
+    """Manage Guruji instructor verification requests."""
+    if 'user' in session and session['user'] == usr_name:
+        # Connect to Guruji database
+        guruji_db = client["guruji"]  # Make sure this matches your Guruji MongoDB database name
+        users_collection = guruji_db["users"]
+        
+        if request.method == 'POST':
+            action = request.form.get("action")
+            user_id = request.form.get("user_id")
+            
+            if action == "approve":
+                users_collection.update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": {"verification_status": "approved"}}
+                )
+                from flask import flash
+                flash('Instructor approved successfully!', 'success')
+            
+            elif action == "reject":
+                users_collection.update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": {"verification_status": "rejected", "role": "student"}}
+                )
+                from flask import flash
+                flash('Instructor rejected.', 'info')
+            
+            return redirect('/guruji-instructors')
+        
+        # Get all pending instructor requests
+        pending_instructors = list(users_collection.find({
+            "role": "instructor",
+            "verification_status": "pending"
+        }).sort("created_at", -1))
+        
+        # Get all approved instructors
+        approved_instructors = list(users_collection.find({
+            "role": "instructor",
+            "verification_status": "approved"
+        }).sort("created_at", -1))
+        
+        # Get all rejected
+        rejected_instructors = list(users_collection.find({
+            "verification_status": "rejected"
+        }).sort("created_at", -1).limit(20))
+        
+        return render_template('guruji_instructors.html', 
+                             pending=pending_instructors,
+                             approved=approved_instructors,
+                             rejected=rejected_instructors)
+    else:
+        return redirect("/")
+
+
+# Also add this API endpoint for cross-domain verification (optional)
+@app.route("/api/guruji/verify-instructor", methods=['POST'])
+def verify_instructor_api():
+    """API endpoint to verify instructor (with API key auth)."""
+    api_key = request.headers.get('X-API-Key')
+    
+    # Simple API key auth - set this in your .env
+    if api_key != os.getenv("GURUJI_API_KEY"):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json()
+    user_id = data.get('user_id')
+    action = data.get('action')  # 'approve' or 'reject'
+    
+    if not user_id or action not in ['approve', 'reject']:
+        return jsonify({'error': 'Invalid request'}), 400
+    
+    guruji_db = client["guruji"]
+    users_collection = guruji_db["users"]
+    
+    if action == "approve":
+        users_collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"verification_status": "approved"}}
+        )
+    else:
+        users_collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"verification_status": "rejected", "role": "student"}}
+        )
+    
+    return jsonify({'success': True, 'action': action})
